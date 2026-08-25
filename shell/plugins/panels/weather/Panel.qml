@@ -143,8 +143,10 @@ Panel {
 
   // Unit precedence: explicit shell.json override, then the configured
   // location's country (known without any network round-trip), then wttr's
-  // reported area, then the session locale.
+  // reported area, then the session locale. Empty override = automatic: the
+  // location picks the unit, same contract as the network panel's band.
   readonly property bool useImperial: Model.shouldUseImperial(setting("unit", ""), Qt.locale().name, configuredCountry || reportCountry)
+  readonly property bool unitPinned: setting("unit", "") !== ""
 
   // Auto-refresh interval in minutes; clamped to a sane minimum.
   readonly property int refreshMinutes: Math.max(1, parseInt(setting("refreshMinutes", 15), 10) || 15)
@@ -272,6 +274,36 @@ Panel {
 
   function finishSavingLocation() {
     if (savingLocation && savingLocationQueryStarted) cancelEditingLocation()
+  }
+
+  // Write widget settings back to the module's shell.json entry. Applied
+  // locally first so the label flips on the click itself; the shell.json
+  // write comes back through the bar as the same value.
+  function persistSettings(values) {
+    var entry = { id: root.moduleName }
+    for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
+    for (var key in values) entry[key] = values[key]
+
+    root.settings = entry
+    if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
+    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
+      root.bar.shell.updateEntryInline(root.moduleName, entry)
+  }
+
+  // Clicking the degree label pins the opposite of what is showing — the
+  // unit the user is asking for, never a silent mode change.
+  function pinOppositeUnit() {
+    persistSettings({ unit: useImperial ? "metric" : "imperial" })
+  }
+
+  // SUPER + U and the IPC toggle flip while automatic and restore automatic
+  // when pinned, so automatic is always one press away.
+  function toggleUnit() {
+    persistSettings({ unit: unitPinned ? "" : (useImperial ? "metric" : "imperial") })
+  }
+
+  function unitAuto() {
+    persistSettings({ unit: "" })
   }
 
   function persistLocation(name, latitude, longitude, country) {
@@ -514,6 +546,7 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function edit(): void { root.openFromHotkey(); root.startEditingLocation() }
+    function toggleUnit(): void { root.toggleUnit() }
   }
 
   KeyboardPanel {
@@ -595,6 +628,7 @@ Panel {
               font.bold: true
             }
             Text {
+              id: unitLabel
               textFormat: Text.PlainText
               text: root.current ? root.tempUnit : ""
               color: root.bar.foreground
@@ -602,6 +636,41 @@ Panel {
               font.pixelSize: Style.font.display
               anchors.top: tempBig.top
               anchors.topMargin: Style.space(10)
+
+              TapHandler {
+                onTapped: root.pinOppositeUnit()
+              }
+              HoverHandler {
+                id: unitHover
+                cursorShape: Qt.PointingHandCursor
+              }
+              PanelToolTip {
+                visible: unitHover.hovered
+                text: root.unitPinned
+                  ? "Pinned " + root.tempUnit + " · click to switch"
+                  : "Automatic · following " + (root.reportLocation || "your location")
+              }
+            }
+            Text {
+              id: unitAutoDot
+              visible: root.unitPinned
+              text: "·"
+              color: Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.display
+              anchors.baseline: unitLabel.baseline
+
+              TapHandler {
+                onTapped: root.unitAuto()
+              }
+              HoverHandler {
+                id: unitAutoHover
+                cursorShape: Qt.PointingHandCursor
+              }
+              PanelToolTip {
+                visible: unitAutoHover.hovered
+                text: "Let your location pick the unit"
+              }
             }
           }
         }
